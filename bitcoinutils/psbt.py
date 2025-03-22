@@ -58,6 +58,10 @@ PSBT_OUT_PROPRIETARY = 0xFC
 # PSBT Magic Bytes
 PSBT_MAGIC_BYTES = b'psbt\xff'
 
+# BIP-370 Transaction Modifiable Flags
+PSBT_MOD_INPUTS = 0x01
+PSBT_MOD_OUTPUTS = 0x02
+
 class PSBTError(Exception):
     """Base exception for PSBT-related errors."""
     pass
@@ -76,6 +80,7 @@ class PSBT:
         xpubs (Dict): Global xpub map
         proprietary (Dict): Global proprietary key-value pairs
         unknown (Dict): Unknown global key-value pairs
+        modifiable (int): BIP-370 modifiable flags
     """
 
     def __init__(self, tx: Optional[Transaction] = None):
@@ -91,6 +96,7 @@ class PSBT:
         self.xpubs: Dict[bytes, bytes] = {}
         self.proprietary: Dict[bytes, bytes] = {}
         self.unknown: Dict[bytes, bytes] = {}
+        self.modifiable: int = 0
 
     @staticmethod
     def parse_key(key: bytes) -> Tuple[int, bytes]:
@@ -123,6 +129,10 @@ class PSBT:
 
         # Version
         out += encode_varint(1) + bytes([PSBT_GLOBAL_VERSION]) + encode_varint(1) + bytes([self.version])
+
+        # BIP-370 modifiable flags
+        if self.modifiable:
+            out += encode_varint(1) + bytes([PSBT_GLOBAL_TX_MODIFIABLE]) + encode_varint(1) + bytes([self.modifiable])
 
         # Separator
         out += b'\x00'
@@ -199,6 +209,8 @@ class PSBT:
                 psbt.outputs = [{} for _ in psbt.tx.outputs]
             elif key_type == PSBT_GLOBAL_VERSION:
                 psbt.version = value[0]
+            elif key_type == PSBT_GLOBAL_TX_MODIFIABLE:
+                psbt.modifiable = value[0]
             elif key_type == PSBT_GLOBAL_XPUB:
                 psbt.xpubs[key_data] = value
             elif key_type == PSBT_GLOBAL_PROPRIETARY:
@@ -302,6 +314,9 @@ class PSBT:
             if xpub in self.xpubs and self.xpubs[xpub] != value:
                 raise PSBTError(f"Conflicting value for xpub {xpub.hex()}")
             self.xpubs[xpub] = value
+
+        # Combine modifiable flags
+        self.modifiable |= other.modifiable
 
     def sign(self, key: PrivateKey) -> int:
         """Sign any unsigned inputs that can be signed with this private key.
@@ -432,3 +447,46 @@ class PSBT:
                 final_tx.witnesses.append(witness_stack)
 
         return final_tx
+
+    def add_input(self, txin: TxInput) -> None:
+        """Add a new input to the PSBT.
+        
+        Args:
+            txin: The TxInput to add
+            
+        Raises:
+            PSBTError: If inputs are not modifiable
+        """
+        if not (self.modifiable & PSBT_MOD_INPUTS):
+            raise PSBTError("PSBT inputs are not modifiable")
+            
+        self.tx.inputs.append(txin)
+        self.inputs.append({})
+
+    def add_output(self, txout: TxOutput) -> None:
+        """Add a new output to the PSBT.
+        
+        Args:
+            txout: The TxOutput to add
+            
+        Raises:
+            PSBTError: If outputs are not modifiable
+        """
+        if not (self.modifiable & PSBT_MOD_OUTPUTS):
+            raise PSBTError("PSBT outputs are not modifiable")
+            
+        self.tx.outputs.append(txout)
+        self.outputs.append({})
+
+    def set_modifiable(self, inputs: bool = False, outputs: bool = False) -> None:
+        """Set which parts of the PSBT are modifiable.
+        
+        Args:
+            inputs: Whether inputs can be added
+            outputs: Whether outputs can be added
+        """
+        self.modifiable = 0
+        if inputs:
+            self.modifiable |= PSBT_MOD_INPUTS
+        if outputs:
+            self.modifiable |= PSBT_MOD_OUTPUTS
