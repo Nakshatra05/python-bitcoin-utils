@@ -5,7 +5,7 @@ from bitcoinutils.setup import setup
 from bitcoinutils.transactions import Transaction, TxInput, TxOutput
 from bitcoinutils.keys import PrivateKey, P2pkhAddress
 from bitcoinutils.script import Script
-from bitcoinutils.psbt import PSBT, PSBTError
+from bitcoinutils.psbt import PSBT, PSBTError, PSBT_MOD_INPUTS, PSBT_MOD_OUTPUTS
 from bitcoinutils.utils import to_satoshis
 
 class TestPSBT(unittest.TestCase):
@@ -90,6 +90,53 @@ class TestPSBT(unittest.TestCase):
         self.assertIsInstance(final_tx, Transaction)
         self.assertEqual(len(final_tx.inputs), 1)
         self.assertEqual(len(final_tx.outputs), 1)
+
+    def test_add_input_not_modifiable(self):
+        """Test adding input when not modifiable raises error."""
+        psbt = PSBT(self.tx)
+        new_input = TxInput('0000000000000000000000000000000000000000000000000000000000000000', 0)
+        
+        with self.assertRaises(PSBTError):
+            psbt.add_input(new_input)
+
+    def test_add_output_not_modifiable(self):
+        """Test adding output when not modifiable raises error."""
+        psbt = PSBT(self.tx)
+        new_output = TxOutput(to_satoshis(0.05), self.addr2.to_script_pub_key())
+        
+        with self.assertRaises(PSBTError):
+            psbt.add_output(new_output)
+
+    def test_add_input_modifiable(self):
+        """Test adding input when modifiable."""
+        psbt = PSBT(self.tx)
+        psbt.set_modifiable(inputs=True)
+        new_input = TxInput('0000000000000000000000000000000000000000000000000000000000000000', 0)
+        
+        psbt.add_input(new_input)
+        self.assertEqual(len(psbt.inputs), 2)
+        self.assertEqual(len(psbt.tx.inputs), 2)
+
+    def test_add_output_modifiable(self):
+        """Test adding output when modifiable."""
+        psbt = PSBT(self.tx)
+        psbt.set_modifiable(outputs=True)
+        new_output = TxOutput(to_satoshis(0.05), self.addr2.to_script_pub_key())
+        
+        psbt.add_output(new_output)
+        self.assertEqual(len(psbt.outputs), 2)
+        self.assertEqual(len(psbt.tx.outputs), 2)
+
+    def test_combine_modifiable_flags(self):
+        """Test combining PSBTs combines modifiable flags."""
+        psbt1 = PSBT(self.tx)
+        psbt2 = PSBT(self.tx)
+        
+        psbt1.set_modifiable(inputs=True)
+        psbt2.set_modifiable(outputs=True)
+        
+        psbt1.combine(psbt2)
+        self.assertEqual(psbt1.modifiable, PSBT_MOD_INPUTS | PSBT_MOD_OUTPUTS)
 
 if __name__ == '__main__':
     unittest.main()
